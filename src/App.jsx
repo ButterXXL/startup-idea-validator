@@ -9,6 +9,73 @@ import { analyzeStartupIdea } from './api.js'
 import './App.css'
 import ScoreReflection from './components/ScoreReflection'
 import ValidationSuite from './components/ValidationSuite'
+import useExtractScore from './hooks/useExtractScore'
+
+function extractImprovementTips(analysisText) {
+  if (!analysisText) return '';
+  // Suche nach "Empfehlungen:" oder "Verbesserungstipps:" und extrahiere den folgenden Absatz
+  const match = analysisText.match(/(?:Empfehlungen|Verbesserungstipps)\s*[:\-\n]+([\s\S]+)/i);
+  if (match) {
+    // Nur den ersten Absatz oder bis zum nächsten Abschnitt
+    const tips = match[1].split(/\n\s*\n|\n\d+\.|\n[A-ZÄÖÜ]/)[0];
+    return tips.trim();
+  }
+  return '';
+}
+
+function renderFormattedAnalysis(analysis) {
+  if (!analysis) return null;
+  // Einfache Heuristik: Zeilen mit : am Ende = Überschrift, Zeilen mit - oder * am Anfang = Liste
+  const lines = analysis.split(/\r?\n/);
+  const elements = [];
+  let listItems = [];
+  lines.forEach((line, idx) => {
+    const trimmed = line.trim();
+    if (/^[-*•]\s+/.test(trimmed)) {
+      // Listenpunkt
+      listItems.push(trimmed.replace(/^[-*•]\s+/, ''));
+    } else if (/^\d+\./.test(trimmed)) {
+      // Nummerierte Liste
+      listItems.push(trimmed.replace(/^\d+\.\s*/, ''));
+    } else {
+      if (listItems.length > 0) {
+        elements.push(
+          <ul className="list-disc pl-6 mb-2" key={idx + '-ul'}>
+            {listItems.map((item, i) => (
+              <li className="mb-1" style={{listStyleType: 'disc'}} key={i}>• {item}</li>
+            ))}
+          </ul>
+        );
+        listItems = [];
+      }
+      if (/^[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\s]+:$/u.test(trimmed)) {
+        // Überschrift
+        elements.push(
+          <div className="font-bold text-xl mt-4 mb-1" key={idx + '-h'}>{trimmed.replace(/:$/, '')}</div>
+        );
+      } else if (/^[A-ZÄÖÜ][A-Za-zÄÖÜäöüß\s]+:$/u.test(trimmed)) {
+        // Unterüberschrift (selbe Heuristik, ggf. anpassen)
+        elements.push(
+          <div className="font-semibold text-lg mt-3 mb-1" key={idx + '-sh'}>{trimmed.replace(/:$/, '')}</div>
+        );
+      } else if (trimmed) {
+        elements.push(
+          <div className="mb-2 text-base" key={idx + '-p'}>{trimmed}</div>
+        );
+      }
+    }
+  });
+  if (listItems.length > 0) {
+    elements.push(
+      <ul className="list-disc pl-6 mb-2" key={'final-ul'}>
+        {listItems.map((item, i) => (
+          <li className="mb-1" style={{listStyleType: 'disc'}} key={i}>• {item}</li>
+        ))}
+      </ul>
+    );
+  }
+  return <div>{elements}</div>;
+}
 
 function App() {
   const [formData, setFormData] = useState({
@@ -71,6 +138,9 @@ function App() {
     // Optional: Scroll zum Formular
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
+
+  const score = useExtractScore(analysis)
+  const improvementTips = extractImprovementTips(analysis)
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-8 px-4">
@@ -203,9 +273,7 @@ function App() {
             </CardHeader>
             <CardContent>
               <div className="bg-gray-50 rounded-lg p-6 max-h-96 overflow-y-auto">
-                <pre className="whitespace-pre-wrap text-sm text-gray-800 font-sans leading-relaxed">
-                  {analysis}
-                </pre>
+                {renderFormattedAnalysis(analysis)}
               </div>
             </CardContent>
           </Card>
@@ -220,7 +288,7 @@ function App() {
           />
         )}
         {showValidationSuite && (
-          <ValidationSuite />
+          <ValidationSuite score={score} improvementTips={improvementTips} onBack={handleEditIdea} />
         )}
         {/* Footer */}
         <div className="text-center mt-8 text-gray-500 text-sm">

@@ -32,7 +32,7 @@ Gib bitte eine strukturierte Bewertung mit einem Startup Score von 0–100, Feed
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${import.meta.env.VITE_OPENAI_API_KEY || process.env.OPENAI_API_KEY}`
+      'Authorization': `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`
     },
     body: JSON.stringify({
       model: 'gpt-4.1-mini',
