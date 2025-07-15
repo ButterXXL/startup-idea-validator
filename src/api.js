@@ -9,33 +9,23 @@ Problem: ${formData.problemSolved}
 
 Gib bitte eine strukturierte Bewertung mit einem Startup Score von 0–100, Feedback zu Zielgruppe, Marktpotenzial, USP, Monetarisierung und Empfehlungen.`
 
-  try {
-    // Try to use backend API first
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ prompt })
-    })
-
-    if (response.ok) {
-      const data = await response.json()
-      return data.analysis
-    }
-  } catch (error) {
-    console.log('Backend API not available, using direct OpenAI API')
+  // Debug: Check if API key is loaded
+  const apiKey = import.meta.env.VITE_OPENAI_API_KEY
+  console.log('API Key loaded:', apiKey ? `${apiKey.substring(0, 10)}...` : 'NOT FOUND')
+  
+  if (!apiKey) {
+    throw new Error('OpenAI API key not found. Make sure VITE_OPENAI_API_KEY is set in your .env file.')
   }
 
-  // Fallback to direct OpenAI API call (for development)
+  // Direct OpenAI API call
   const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`
+      'Authorization': `Bearer ${apiKey}`
     },
     body: JSON.stringify({
-      model: 'gpt-4.1-mini',
+      model: 'gpt-4o-mini',
       messages: [
         {
           role: 'system',
@@ -52,7 +42,9 @@ Gib bitte eine strukturierte Bewertung mit einem Startup Score von 0–100, Feed
   })
 
   if (!openaiResponse.ok) {
-    throw new Error(`API Error: ${openaiResponse.status}`)
+    const errorText = await openaiResponse.text()
+    console.log('OpenAI Error Response:', errorText)
+    throw new Error(`API Error: ${openaiResponse.status} - ${errorText}`)
   }
 
   const data = await openaiResponse.json()

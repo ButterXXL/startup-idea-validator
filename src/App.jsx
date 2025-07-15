@@ -288,7 +288,15 @@ function App() {
           />
         )}
         {showValidationSuite && (
-          <ValidationSuite score={score} improvementTips={improvementTips} onBack={handleEditIdea} />
+          <ValidationSuite 
+            score={score} 
+            improvementTips={improvementTips} 
+            onBack={handleEditIdea}
+            startupIdea={formData.startupIdea}
+            idealCustomer={formData.idealCustomer}
+            problemSolved={formData.problemSolved}
+            analysisText={analysis}
+          />
         )}
         {/* Footer */}
         <div className="text-center mt-8 text-gray-500 text-sm">
