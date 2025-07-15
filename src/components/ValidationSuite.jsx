@@ -1,13 +1,85 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card.jsx'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert.jsx'
 import { Button } from '@/components/ui/button.jsx'
+import { Badge } from '@/components/ui/badge.jsx'
+import { Loader2, Link, CheckCircle, AlertCircle } from 'lucide-react'
+import googleAdsService from '../services/googleAdsService'
 
 const ValidationSuite = ({ score, improvementTips, onBack, startupIdea, idealCustomer, problemSolved, analysisText }) => {
   const [selectedMethod, setSelectedMethod] = useState(null)
+  const [isGoogleAdsConnected, setIsGoogleAdsConnected] = useState(false)
+  const [isConnecting, setIsConnecting] = useState(false)
+  const [campaigns, setCampaigns] = useState([])
+  const [isCreatingCampaign, setIsCreatingCampaign] = useState(false)
+  const [accounts, setAccounts] = useState([])
+  const [selectedAccount, setSelectedAccount] = useState(null)
   const showValidationButtons = score >= 25
   const isHighScore = score > 60
   const isVeryLowScore = score < 25
+
+  // Check Google Ads connection status on component mount
+  useEffect(() => {
+    setIsGoogleAdsConnected(googleAdsService.isConnected())
+    if (googleAdsService.isConnected()) {
+      loadAccounts()
+    }
+  }, [])
+
+  const loadAccounts = async () => {
+    try {
+      const accountsList = await googleAdsService.getAccounts()
+      setAccounts(accountsList)
+      if (accountsList.length > 0) {
+        setSelectedAccount(accountsList[0])
+      }
+    } catch (error) {
+      console.error('Error loading accounts:', error)
+    }
+  }
+
+  const handleGoogleAdsConnect = async () => {
+    setIsConnecting(true)
+    try {
+      await googleAdsService.authenticateUser()
+      setIsGoogleAdsConnected(true)
+      await loadAccounts()
+    } catch (error) {
+      console.error('Error connecting to Google Ads:', error)
+      alert('Fehler beim Verbinden mit Google Ads: ' + error.message)
+    } finally {
+      setIsConnecting(false)
+    }
+  }
+
+  const handleCreateGoogleAdsCampaign = async () => {
+    if (!selectedAccount) {
+      alert('Bitte wählen Sie zuerst ein Google Ads-Konto aus.')
+      return
+    }
+
+    setIsCreatingCampaign(true)
+    try {
+      const campaign = await googleAdsService.createCampaign({
+        accountId: selectedAccount.id,
+        startupIdea,
+        idealCustomer,
+        problemSolved,
+        validationType: 'Google Ads'
+      })
+      
+      setCampaigns(prev => [...prev, campaign])
+      alert(`Kampagne "${campaign.name}" wurde erfolgreich erstellt!`)
+      
+      // Switch to campaign view
+      setSelectedMethod('google-ads-live')
+    } catch (error) {
+      console.error('Error creating campaign:', error)
+      alert('Fehler beim Erstellen der Kampagne: ' + error.message)
+    } finally {
+      setIsCreatingCampaign(false)
+    }
+  }
 
   // Funktion zur Erstellung personalisierter Anleitungen
   const createPersonalizedGuide = (methodId) => {
@@ -88,9 +160,16 @@ const ValidationSuite = ({ score, improvementTips, onBack, startupIdea, idealCus
 
   const validationMethods = [
     {
+      id: 'google-ads-api',
+      title: '🚀 Google Ads - Automatische Kampagne',
+      description: 'Erstelle automatisch eine personalisierte Google Ads-Kampagne direkt aus der App. Keine manuelle Einrichtung nötig - wir übernehmen alles!',
+      isApiIntegration: true,
+      requiresConnection: true
+    },
+    {
       id: 'google-ads',
-      title: 'Google Ads Validierung',
-      description: 'Teste deine Idee mit echten Google-Nutzern durch gezielte Werbeanzeigen. Du schaltest eine Anzeige und misst, wie viele Interessenten auf dein Angebot klicken.',
+      title: 'Google Ads - Manuelle Einrichtung',
+      description: 'Erhalte eine detaillierte Anleitung zur manuellen Einrichtung deiner Google Ads-Kampagne mit personalisierten Vorlagen.',
       setupGuide: createPersonalizedGuide('google-ads')
     },
     {
@@ -102,7 +181,16 @@ const ValidationSuite = ({ score, improvementTips, onBack, startupIdea, idealCus
   ]
 
   const handleMethodClick = (method) => {
-    setSelectedMethod(method)
+    if (method.id === 'google-ads-api') {
+      // Handle Google Ads API integration
+      if (!isGoogleAdsConnected) {
+        handleGoogleAdsConnect()
+      } else {
+        setSelectedMethod(method)
+      }
+    } else {
+      setSelectedMethod(method)
+    }
   }
 
   const handleBackToMethods = () => {
@@ -114,6 +202,144 @@ const ValidationSuite = ({ score, improvementTips, onBack, startupIdea, idealCus
   }
 
   if (selectedMethod) {
+    // Handle Google Ads API integration view
+    if (selectedMethod.id === 'google-ads-api') {
+      return (
+        <Card className="mt-8 shadow-lg">
+          <CardHeader>
+            <CardTitle className="text-2xl font-bold text-blue-600">
+              🚀 Google Ads - Automatische Kampagne
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Connection Status */}
+            <div className="bg-blue-50 p-4 rounded-lg">
+              <h3 className="font-semibold text-blue-800 mb-3">📡 Verbindungsstatus</h3>
+              <div className="flex items-center gap-3">
+                {isGoogleAdsConnected ? (
+                  <>
+                    <CheckCircle className="w-5 h-5 text-green-600" />
+                    <span className="text-green-700">Mit Google Ads verbunden</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="w-5 h-5 text-orange-600" />
+                    <span className="text-orange-700">Nicht verbunden</span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Account Selection */}
+            {isGoogleAdsConnected && accounts.length > 0 && (
+              <div className="bg-green-50 p-4 rounded-lg">
+                <h3 className="font-semibold text-green-800 mb-3">🏢 Google Ads Konto</h3>
+                <select 
+                  value={selectedAccount?.id || ''}
+                  onChange={(e) => setSelectedAccount(accounts.find(acc => acc.id === e.target.value))}
+                  className="w-full p-2 border border-gray-300 rounded-md"
+                >
+                  {accounts.map(account => (
+                    <option key={account.id} value={account.id}>
+                      {account.name} ({account.id})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Campaign Creation */}
+            {isGoogleAdsConnected && selectedAccount && (
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <h3 className="font-semibold text-lg mb-3">📋 Kampagnen-Vorschau</h3>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div><strong>Kampagnenname:</strong> {startupIdea || 'Deine Idee'} - Validierung</div>
+                  <div><strong>Budget:</strong> €25/Tag</div>
+                  <div><strong>Zielgruppe:</strong> {idealCustomer || 'Deine Zielgruppe'}</div>
+                  <div><strong>Keywords:</strong> {startupIdea ? startupIdea.toLowerCase().split(' ').slice(0, 3).join(', ') : 'Automatisch generiert'}</div>
+                </div>
+                <div className="mt-4">
+                  <strong>Anzeigentext:</strong><br />
+                  <div className="bg-white p-3 rounded border text-sm mt-2">
+                    <div className="text-blue-600 font-medium">Endlich eine Lösung für {problemSolved || 'dein Problem'}</div>
+                    <div className="text-gray-600">{startupIdea || 'Dein Produkt'} - Jetzt testen</div>
+                    <div className="text-gray-700 text-xs mt-1">
+                      Speziell für {idealCustomer || 'deine Zielgruppe'} entwickelt. Löse {problemSolved || 'das Problem'} effektiv. Jetzt kostenlos testen!
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Existing Campaigns */}
+            {campaigns.length > 0 && (
+              <div className="bg-purple-50 p-4 rounded-lg">
+                <h3 className="font-semibold text-purple-800 mb-3">📊 Deine Kampagnen</h3>
+                <div className="space-y-3">
+                  {campaigns.map((campaign) => (
+                    <div key={campaign.id} className="bg-white p-3 rounded border">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h4 className="font-medium">{campaign.name}</h4>
+                          <p className="text-sm text-gray-600">Status: {campaign.status}</p>
+                        </div>
+                        <Badge className="bg-blue-100 text-blue-800">
+                          €{campaign.budget/100}/Tag
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex gap-4 pt-4">
+              {!isGoogleAdsConnected ? (
+                <Button 
+                  onClick={handleGoogleAdsConnect}
+                  disabled={isConnecting}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 text-lg"
+                >
+                  {isConnecting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      Verbinde...
+                    </>
+                  ) : (
+                    '🔗 Mit Google Ads verbinden'
+                  )}
+                </Button>
+              ) : (
+                <Button 
+                  onClick={handleCreateGoogleAdsCampaign}
+                  disabled={isCreatingCampaign || !selectedAccount}
+                  className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 text-lg"
+                >
+                  {isCreatingCampaign ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      Erstelle Kampagne...
+                    </>
+                  ) : (
+                    '🚀 Kampagne erstellen'
+                  )}
+                </Button>
+              )}
+              <Button 
+                onClick={handleBackToMethods}
+                variant="outline"
+                className="px-6 py-3"
+              >
+                ← Zurück zur Auswahl
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )
+    }
+
+    // Handle manual setup methods
     return (
       <Card className="mt-8 shadow-lg">
         <CardHeader>
@@ -266,20 +492,46 @@ const ValidationSuite = ({ score, improvementTips, onBack, startupIdea, idealCus
               {validationMethods.map((method) => (
                 <Card 
                   key={method.id}
-                  className="cursor-pointer hover:shadow-md transition-shadow border-2 hover:border-blue-300"
+                  className={`cursor-pointer hover:shadow-md transition-shadow border-2 hover:border-blue-300 ${
+                    method.isApiIntegration ? 'bg-gradient-to-r from-blue-50 to-green-50' : ''
+                  }`}
                   onClick={() => handleMethodClick(method)}
                 >
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-lg font-bold text-blue-600">
+                    <CardTitle className="text-lg font-bold text-blue-600 flex items-center justify-between">
                       {method.title}
+                      {method.isApiIntegration && (
+                        <div className="flex items-center gap-2">
+                          {isGoogleAdsConnected ? (
+                            <Badge className="bg-green-100 text-green-800">
+                              <CheckCircle className="w-3 h-3 mr-1" />
+                              Verbunden
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-orange-100 text-orange-800">
+                              <Link className="w-3 h-3 mr-1" />
+                              Verbindung erforderlich
+                            </Badge>
+                          )}
+                        </div>
+                      )}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="pt-0">
                     <p className="text-gray-700 text-sm leading-relaxed">
                       {method.description}
                     </p>
-                    <div className="mt-3 text-blue-600 text-sm font-medium">
-                      Klicken für personalisierte Anleitung →
+                    <div className="mt-3 flex items-center justify-between">
+                      <div className="text-blue-600 text-sm font-medium">
+                        {method.isApiIntegration ? (
+                          isGoogleAdsConnected ? 'Kampagne erstellen →' : 'Mit Google Ads verbinden →'
+                        ) : (
+                          'Klicken für personalisierte Anleitung →'
+                        )}
+                      </div>
+                      {method.isApiIntegration && isConnecting && (
+                        <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                      )}
                     </div>
                   </CardContent>
                 </Card>
