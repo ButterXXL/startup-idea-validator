@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Routes, Route } from 'react-router-dom'
 import { Button } from '@/components/ui/button.jsx'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Input } from '@/components/ui/input.jsx'
@@ -9,6 +10,7 @@ import { analyzeStartupIdea } from './api.js'
 import './App.css'
 import ScoreReflection from './components/ScoreReflection'
 import ValidationSuite from './components/ValidationSuite'
+import LandingPage from './components/LandingPage'
 import useExtractScore from './hooks/useExtractScore'
 
 function extractImprovementTips(analysisText) {
@@ -77,7 +79,7 @@ function renderFormattedAnalysis(analysis) {
   return <div>{elements}</div>;
 }
 
-function App() {
+const MainApp = () => {
   const [formData, setFormData] = useState({
     firstName: '',
     startupIdea: '',
@@ -304,6 +306,15 @@ function App() {
         </div>
       </div>
     </div>
+  )
+}
+
+function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<MainApp />} />
+      <Route path="/landing/:slug" element={<LandingPage />} />
+    </Routes>
   )
 }
 

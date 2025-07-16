@@ -3,7 +3,9 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card.j
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert.jsx'
 import { Button } from '@/components/ui/button.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
-import { Link, CheckCircle, AlertCircle, ExternalLink, BarChart3, Play, Pause, Settings } from 'lucide-react'
+import { Link, CheckCircle, AlertCircle, ExternalLink, BarChart3, Play, Pause, Settings, Zap, Shield, FileText, Globe, Loader2 } from 'lucide-react'
+import googleAdsService from '@/services/googleAdsService.js'
+import landingPageGenerator from '@/services/landingPageGenerator.js'
 
 const ValidationSuite = ({ score, improvementTips, onBack, startupIdea, idealCustomer, problemSolved, analysisText }) => {
   const [selectedMethod, setSelectedMethod] = useState(null)
@@ -11,432 +13,658 @@ const ValidationSuite = ({ score, improvementTips, onBack, startupIdea, idealCus
   const [userInfo, setUserInfo] = useState(null)
   const [campaigns, setCampaigns] = useState([])
   const [showDashboard, setShowDashboard] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const [accounts, setAccounts] = useState([])
+  const [selectedAccount, setSelectedAccount] = useState(null)
+  const [mode, setMode] = useState('demo') // 'demo' or 'real'
+  
+  // Landing page generation states
+  const [landingPageLoading, setLandingPageLoading] = useState(false)
+  const [landingPageError, setLandingPageError] = useState(null)
+  const [generatedLandingPage, setGeneratedLandingPage] = useState(null)
   
   const showValidationButtons = score >= 25
   const isHighScore = score > 60
   const isVeryLowScore = score < 25
 
-  // Check for OAuth callback in URL params
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search)
-    const code = urlParams.get('code')
-    const state = urlParams.get('state')
+  // Handle landing page generation
+  const handleGenerateLandingPage = async () => {
+    setLandingPageLoading(true)
+    setLandingPageError(null)
     
-    if (code && state === 'google_oauth') {
-      // Simulate successful login
-      setIsLoggedIn(true)
-      setUserInfo({
-        name: 'Max Mustermann',
-        email: 'max@example.com',
-        avatar: 'https://via.placeholder.com/40'
-      })
-      setShowDashboard(true)
+    try {
+      const result = await landingPageGenerator.createLandingPage(
+        startupIdea,
+        idealCustomer,
+        problemSolved
+      )
       
-      // Clean up URL
-      window.history.replaceState({}, document.title, window.location.pathname)
+      if (result.success) {
+        setGeneratedLandingPage(result)
+      } else {
+        setLandingPageError(result.error)
+      }
+    } catch (error) {
+      setLandingPageError('Fehler beim Generieren der Landing Page')
+    } finally {
+      setLandingPageLoading(false)
     }
-  }, [])
+  }
 
-  // Simple Google OAuth login with better handling
-  const handleGoogleLogin = () => {
-    // For demo purposes, we'll simulate login after a short delay
-    // In production, you would redirect to Google OAuth
+  // Handle authentication for both demo and real modes
+  const handleGoogleAdsLogin = async (selectedMode) => {
+    setIsLoading(true)
+    setError(null)
+    setMode(selectedMode)
     
-    const confirmLogin = window.confirm(
-      'Demo: Möchtest du dich mit Google einloggen?\n\n' +
-      'In der echten App würdest du zu Google weitergeleitet werden.'
-    )
-    
-    if (confirmLogin) {
-      // Simulate login delay
-      setTimeout(() => {
+    try {
+      // Set the mode in the service
+      googleAdsService.setMode(selectedMode)
+      
+      // Authenticate based on mode
+      const result = await googleAdsService.authenticate()
+      
+      if (result.success) {
         setIsLoggedIn(true)
-        setUserInfo({
-          name: 'Max Mustermann',
-          email: 'max@example.com',
-          avatar: 'https://via.placeholder.com/40'
-        })
+        setUserInfo(result.userInfo)
+        
+        // Fetch accounts
+        const accountsData = await googleAdsService.getAccounts()
+        setAccounts(accountsData)
+        
+        if (accountsData.length > 0) {
+          setSelectedAccount(accountsData[0])
+          googleAdsService.joinAccount(accountsData[0].id)
+        }
+        
         setShowDashboard(true)
-      }, 1000)
+        setSelectedMethod('google-ads')
+        
+        // Show success message
+        alert(result.message)
+      }
+    } catch (error) {
+      console.error('Authentication error:', error)
+      setError(`Authentifizierung fehlgeschlagen: ${error.message}`)
+    } finally {
+      setIsLoading(false)
     }
   }
 
-  // Alternative: Direct redirect approach (uncomment for production)
-  /*
-  const handleGoogleLogin = () => {
-    const clientId = 'YOUR_GOOGLE_CLIENT_ID'
-    const redirectUri = encodeURIComponent(window.location.origin)
-    const scope = encodeURIComponent('email profile')
-    const state = 'google_oauth'
+  // Handle campaign creation
+  const handleCreateCampaign = async () => {
+    if (!selectedAccount) return
     
-    const authUrl = `https://accounts.google.com/oauth/authorize?` +
-      `client_id=${clientId}&` +
-      `redirect_uri=${redirectUri}&` +
-      `response_type=code&` +
-      `scope=${scope}&` +
-      `state=${state}`
+    setIsLoading(true)
+    setError(null)
     
-    // Direct redirect instead of popup
-    window.location.href = authUrl
-  }
-  */
-
-  const handleCreateCampaign = () => {
-    const newCampaign = {
-      id: Date.now(),
-      name: `${startupIdea || 'Startup'} - Validierung`,
-      status: 'Aktiv',
-      budget: 25,
-      spent: Math.floor(Math.random() * 50), // Simulate some spending
-      impressions: Math.floor(Math.random() * 10000) + 1000, // Simulate impressions
-      clicks: Math.floor(Math.random() * 100) + 10, // Simulate clicks
-      conversions: Math.floor(Math.random() * 10) + 1, // Simulate conversions
-      created: new Date().toLocaleDateString('de-DE')
+    try {
+      const campaignData = {
+        name: `${startupIdea} - Validierung`,
+        budget: { amount: 2500, currency: 'EUR' },
+        targetAudience: idealCustomer,
+        keywords: [
+          startupIdea.toLowerCase(),
+          problemSolved.toLowerCase(),
+          'startup',
+          'lösung',
+          'innovation'
+        ],
+        adText: {
+          headline1: `Endlich eine Lösung für ${problemSolved}`,
+          headline2: `${startupIdea} - Jetzt testen`,
+          description: `Revolutionäre Lösung für ${idealCustomer}. Entdecke ${startupIdea} und löse dein Problem mit ${problemSolved}.`
+        }
+      }
+      
+      const result = await googleAdsService.createCampaign(selectedAccount.id, campaignData)
+      
+      if (result.success) {
+        // Refresh campaigns
+        const updatedCampaigns = await googleAdsService.getCampaigns(selectedAccount.id, startupIdea)
+        setCampaigns(updatedCampaigns)
+        
+        alert(result.message || 'Kampagne erfolgreich erstellt!')
+        
+        // If real mode, show link to Google Ads
+        if (mode === 'real' && result.googleAdsUrl) {
+          if (confirm('Kampagne erstellt! Möchtest du sie in Google Ads öffnen?')) {
+            window.open(result.googleAdsUrl, '_blank')
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Campaign creation error:', error)
+      setError(`Kampagne konnte nicht erstellt werden: ${error.message}`)
+    } finally {
+      setIsLoading(false)
     }
-    setCampaigns([...campaigns, newCampaign])
   }
 
-  const toggleCampaignStatus = (campaignId) => {
-    setCampaigns(campaigns.map(campaign => 
-      campaign.id === campaignId 
-        ? { ...campaign, status: campaign.status === 'Aktiv' ? 'Pausiert' : 'Aktiv' }
-        : campaign
-    ))
-  }
-
+  // Handle logout
   const handleLogout = () => {
+    googleAdsService.disconnect()
     setIsLoggedIn(false)
     setUserInfo(null)
     setShowDashboard(false)
     setCampaigns([])
+    setAccounts([])
+    setSelectedAccount(null)
+    setSelectedMethod(null)
+    setError(null)
   }
 
-  // Dashboard Component
-  const renderDashboard = () => (
-    <div className="space-y-6">
-      {/* User Info Header */}
-      <div className="bg-gradient-to-r from-blue-50 to-green-50 p-4 rounded-lg border">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <img src={userInfo.avatar} alt="Avatar" className="w-10 h-10 rounded-full" />
-            <div>
-              <h3 className="font-semibold text-gray-800">{userInfo.name}</h3>
-              <p className="text-sm text-gray-600">{userInfo.email}</p>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={handleLogout}>
-              Abmelden
-            </Button>
-            <Button variant="outline" onClick={() => setShowDashboard(false)}>
-              ← Zurück zur Validierung
-            </Button>
+  // Listen for real-time campaign updates
+  useEffect(() => {
+    const handleCampaignUpdate = (event) => {
+      const updateData = event.detail
+      console.log('Campaign update received:', updateData)
+      
+      // Update campaigns with new data
+      setCampaigns(prev => prev.map(campaign => 
+        campaign.id === updateData.campaignId 
+          ? { ...campaign, ...updateData }
+          : campaign
+      ))
+    }
+
+    window.addEventListener('campaignUpdate', handleCampaignUpdate)
+    return () => window.removeEventListener('campaignUpdate', handleCampaignUpdate)
+  }, [])
+
+  // Fetch campaigns when account is selected
+  useEffect(() => {
+    if (selectedAccount && isLoggedIn) {
+      const fetchCampaigns = async () => {
+        try {
+          const campaignsData = await googleAdsService.getCampaigns(selectedAccount.id, startupIdea)
+          setCampaigns(campaignsData)
+        } catch (error) {
+          console.error('Error fetching campaigns:', error)
+        }
+      }
+      
+      fetchCampaigns()
+    }
+  }, [selectedAccount, isLoggedIn, startupIdea])
+
+  if (isVeryLowScore) {
+    return (
+      <div className="space-y-6">
+        <Alert className="border-red-200 bg-red-50">
+          <AlertCircle className="h-4 w-4 text-red-600" />
+          <AlertTitle className="text-red-800">Dringend: Grundlegende Verbesserungen nötig</AlertTitle>
+          <AlertDescription className="text-red-700">
+            Deine Startup-Idee benötigt fundamentale Überarbeitungen, bevor eine Validierung sinnvoll ist.
+          </AlertDescription>
+        </Alert>
+        
+        <div className="space-y-4">
+          <h3 className="text-lg font-semibold text-gray-900">Prioritäre Verbesserungen:</h3>
+          <div className="grid gap-3">
+            {improvementTips.map((tip, index) => (
+              <div key={index} className="flex items-start space-x-3 p-3 bg-orange-50 rounded-lg border border-orange-200">
+                <div className="flex-shrink-0 w-6 h-6 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm font-medium">
+                  {index + 1}
+                </div>
+                <p className="text-orange-800 text-sm">{tip}</p>
+              </div>
+            ))}
           </div>
         </div>
-      </div>
-
-      {/* Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={handleCreateCampaign}>
-          <CardContent className="p-4 text-center">
-            <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3">
-              <Play className="w-6 h-6 text-blue-600" />
-            </div>
-            <h3 className="font-semibold text-gray-800">Neue Kampagne</h3>
-            <p className="text-sm text-gray-600">Erstelle eine neue Validierungs-Kampagne</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-4 text-center">
-            <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-              <BarChart3 className="w-6 h-6 text-green-600" />
-            </div>
-            <h3 className="font-semibold text-gray-800">Gesamt-Performance</h3>
-            <div className="text-2xl font-bold text-green-600">
-              {campaigns.reduce((sum, c) => sum + c.clicks, 0)} Klicks
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-4 text-center">
-            <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-3">
-              <Settings className="w-6 h-6 text-purple-600" />
-            </div>
-            <h3 className="font-semibold text-gray-800">Aktive Kampagnen</h3>
-            <div className="text-2xl font-bold text-purple-600">
-              {campaigns.filter(c => c.status === 'Aktiv').length}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Campaigns List */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <BarChart3 className="w-5 h-5" />
-            Meine Kampagnen
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {campaigns.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              <p>Noch keine Kampagnen erstellt.</p>
-              <Button onClick={handleCreateCampaign} className="mt-4">
-                Erste Kampagne erstellen
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {campaigns.map((campaign) => (
-                <div key={campaign.id} className="border rounded-lg p-4">
-                  <div className="flex justify-between items-start mb-3">
-                    <div>
-                      <h4 className="font-semibold text-lg">{campaign.name}</h4>
-                      <p className="text-sm text-gray-600">Erstellt: {campaign.created}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge className={campaign.status === 'Aktiv' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}>
-                        {campaign.status}
-                      </Badge>
-                      <Button 
-                        size="sm" 
-                        variant="outline"
-                        onClick={() => toggleCampaignStatus(campaign.id)}
-                      >
-                        {campaign.status === 'Aktiv' ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                      </Button>
-                    </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                    <div>
-                      <p className="text-gray-600">Budget</p>
-                      <p className="font-semibold">€{campaign.budget}/Tag</p>
-                    </div>
-                    <div>
-                      <p className="text-gray-600">Ausgegeben</p>
-                      <p className="font-semibold">€{campaign.spent}</p>
-                    </div>
-                    <div>
-                      <p className="text-gray-600">Impressionen</p>
-                      <p className="font-semibold">{campaign.impressions.toLocaleString()}</p>
-                    </div>
-                    <div>
-                      <p className="text-gray-600">Klicks</p>
-                      <p className="font-semibold">{campaign.clicks}</p>
-                    </div>
-                  </div>
-                  
-                  <div className="mt-3 pt-3 border-t">
-                    <div className="flex justify-between items-center">
-                      <div className="text-sm text-gray-600">
-                        CTR: {campaign.clicks > 0 ? ((campaign.clicks / campaign.impressions) * 100).toFixed(2) : 0}%
-                      </div>
-                      <Button 
-                        size="sm" 
-                        variant="outline"
-                        onClick={() => window.open('https://ads.google.com/aw/campaigns', '_blank')}
-                      >
-                        <ExternalLink className="w-4 h-4 mr-1" />
-                        In Google Ads öffnen
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Performance Tips */}
-      <Card className="bg-blue-50 border-blue-200">
-        <CardHeader>
-          <CardTitle className="text-blue-800">💡 Performance-Tipps</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3 text-blue-700">
-            <div className="flex items-start gap-2">
-              <CheckCircle className="w-4 h-4 text-blue-600 mt-0.5" />
-              <div>
-                <p className="font-medium">Optimiere deine Keywords</p>
-                <p className="text-sm text-blue-600">Verwende spezifische Long-Tail Keywords für bessere Conversion-Raten</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-2">
-              <CheckCircle className="w-4 h-4 text-blue-600 mt-0.5" />
-              <div>
-                <p className="font-medium">A/B-Teste deine Anzeigentexte</p>
-                <p className="text-sm text-blue-600">Erstelle mehrere Varianten und teste, welche am besten funktioniert</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-2">
-              <CheckCircle className="w-4 h-4 text-blue-600 mt-0.5" />
-              <div>
-                <p className="font-medium">Überwache deine Ausgaben</p>
-                <p className="text-sm text-blue-600">Pausiere Kampagnen mit hohen Kosten und niedrigen Conversions</p>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  )
-
-  // Show dashboard if logged in and requested
-  if (showDashboard && isLoggedIn) {
-    return (
-      <div className="max-w-6xl mx-auto p-6">
-        <h2 className="text-3xl font-bold mb-6 text-center">Kampagnen Dashboard</h2>
-        {renderDashboard()}
+        
+        <div className="flex justify-center">
+          <Button onClick={onBack} variant="outline">
+            ← Zurück zur Analyse
+          </Button>
+        </div>
       </div>
     )
   }
 
-  // Main validation suite
-  return (
-    <div className="max-w-4xl mx-auto p-6">
-      <div className="mb-8">
-        <Button 
-          onClick={onBack}
-          variant="outline"
-          className="mb-4"
-        >
-          ← Zurück zur Analyse
-        </Button>
-        
-        <h2 className="text-3xl font-bold mb-4 text-center">Validierungsoptionen</h2>
-        <p className="text-center text-gray-600 mb-6">
-          Wähle eine Methode, um deine Startup-Idee zu validieren
-        </p>
+  if (showDashboard && isLoggedIn) {
+    return (
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">
+              Google Ads Dashboard ({mode === 'demo' ? 'Demo' : 'Live'})
+            </h2>
+            <p className="text-gray-600">
+              Angemeldet als: {userInfo?.name || userInfo?.email}
+            </p>
+          </div>
+          <div className="flex items-center space-x-2">
+            <Badge variant={mode === 'demo' ? 'secondary' : 'default'}>
+              {mode === 'demo' ? '🎯 Demo Modus' : '🔐 Live Modus'}
+            </Badge>
+            <Button onClick={handleLogout} variant="outline" size="sm">
+              Abmelden
+            </Button>
+          </div>
+        </div>
+
+        {error && (
+          <Alert className="border-red-200 bg-red-50">
+            <AlertCircle className="h-4 w-4 text-red-600" />
+            <AlertDescription className="text-red-700">{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {/* Account Selection */}
+        {accounts.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Account auswählen</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <select 
+                value={selectedAccount?.id || ''} 
+                onChange={(e) => {
+                  const account = accounts.find(acc => acc.id === e.target.value)
+                  setSelectedAccount(account)
+                  if (account) {
+                    googleAdsService.joinAccount(account.id)
+                  }
+                }}
+                className="w-full p-2 border rounded-lg"
+              >
+                {accounts.map(account => (
+                  <option key={account.id} value={account.id}>
+                    {account.name} ({account.currency})
+                  </option>
+                ))}
+              </select>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Campaign Creation */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Neue Kampagne erstellen</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="p-4 bg-blue-50 rounded-lg">
+                <h4 className="font-medium text-blue-900">Kampagnen-Vorschau:</h4>
+                <p className="text-sm text-blue-800 mt-1">
+                  <strong>Name:</strong> {startupIdea} - Validierung
+                </p>
+                <p className="text-sm text-blue-800">
+                  <strong>Budget:</strong> €25/Tag (€750/Monat)
+                </p>
+                <p className="text-sm text-blue-800">
+                  <strong>Zielgruppe:</strong> {idealCustomer}
+                </p>
+                <p className="text-sm text-blue-800">
+                  <strong>Hauptkeyword:</strong> {startupIdea.toLowerCase()}
+                </p>
+              </div>
+              
+              <Button 
+                onClick={handleCreateCampaign} 
+                disabled={isLoading || !selectedAccount}
+                className="w-full"
+              >
+                {isLoading ? 'Erstelle Kampagne...' : 'Kampagne erstellen'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Campaign List */}
+        {campaigns.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Aktive Kampagnen</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {campaigns.map(campaign => (
+                  <div key={campaign.id} className="p-4 border rounded-lg">
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="font-medium">{campaign.name}</h4>
+                      <Badge variant={campaign.status === 'ACTIVE' ? 'default' : 'secondary'}>
+                        {campaign.status}
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                      <div>
+                        <p className="text-gray-600">Impressionen</p>
+                        <p className="font-medium">{campaign.impressions?.toLocaleString() || 0}</p>
+                      </div>
+                      <div>
+                        <p className="text-gray-600">Klicks</p>
+                        <p className="font-medium">{campaign.clicks?.toLocaleString() || 0}</p>
+                      </div>
+                      <div>
+                        <p className="text-gray-600">CTR</p>
+                        <p className="font-medium">{campaign.ctr || 0}%</p>
+                      </div>
+                      <div>
+                        <p className="text-gray-600">Kosten</p>
+                        <p className="font-medium">€{campaign.cost?.toFixed(2) || 0}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Back Button */}
+        <div className="flex justify-center">
+          <Button onClick={onBack} variant="outline">
+            ← Zurück zur Analyse
+          </Button>
+        </div>
       </div>
+    )
+  }
 
-      {/* Score-based alerts */}
-      {isVeryLowScore && (
-        <Alert className="mb-6 border-red-200 bg-red-50">
-          <AlertCircle className="h-4 w-4 text-red-600" />
-          <AlertTitle className="text-red-800">Dringende Verbesserung erforderlich!</AlertTitle>
-          <AlertDescription className="text-red-700">
-            Deine Idee hat einen sehr niedrigen Score. Arbeite zuerst an den Verbesserungsvorschlägen, 
-            bevor du mit der Validierung beginnst.
-          </AlertDescription>
-        </Alert>
-      )}
-
+  return (
+    <div className="space-y-6">
       {isHighScore && (
-        <Alert className="mb-6 border-green-200 bg-green-50">
+        <Alert className="border-green-200 bg-green-50">
           <CheckCircle className="h-4 w-4 text-green-600" />
-          <AlertTitle className="text-green-800">Exzellente Ausgangslage!</AlertTitle>
+          <AlertTitle className="text-green-800">Ausgezeichnet! Deine Idee ist validierungsbereit</AlertTitle>
           <AlertDescription className="text-green-700">
-            Deine Idee hat großes Potenzial. Starte jetzt mit der Validierung, um Marktfeedback zu sammeln.
+            Dein Score von {score}/100 zeigt großes Potenzial. Zeit für die Marktvalidierung!
           </AlertDescription>
         </Alert>
       )}
 
-      {/* Validation Methods */}
+      {!isHighScore && showValidationButtons && (
+        <Alert className="border-yellow-200 bg-yellow-50">
+          <AlertCircle className="h-4 w-4 text-yellow-600" />
+          <AlertTitle className="text-yellow-800">Gut! Deine Idee kann validiert werden</AlertTitle>
+          <AlertDescription className="text-yellow-700">
+            Score: {score}/100 - Bereit für erste Marktvalidierung mit Optimierungspotenzial.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {error && (
+        <Alert className="border-red-200 bg-red-50">
+          <AlertCircle className="h-4 w-4 text-red-600" />
+          <AlertDescription className="text-red-700">{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* Landing Page Generation */}
       {showValidationButtons && (
-        <div className="grid gap-6 mb-8">
-          <Card 
-            className="cursor-pointer hover:shadow-lg transition-shadow border-2 hover:border-blue-400"
-            onClick={handleGoogleLogin}
-          >
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
-                    <ExternalLink className="w-6 h-6 text-blue-600" />
+        <div className="space-y-6">
+          <div>
+            <h3 className="text-xl font-semibold text-gray-900 mb-4">Schritt 1: Landing Page erstellen</h3>
+            <Card className="mb-6">
+              <CardContent className="p-6">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="p-2 bg-purple-100 rounded-lg">
+                    <FileText className="h-6 w-6 text-purple-600" />
                   </div>
                   <div>
-                    <h3 className="text-xl font-semibold text-gray-800">Google Ads Validierung</h3>
-                    <p className="text-gray-600">
-                      Logge dich mit deinem Google Account ein und verwalte deine Kampagnen hier
-                    </p>
-                    {isLoggedIn && (
-                      <Badge className="mt-2 bg-green-100 text-green-800">
-                        <CheckCircle className="w-3 h-3 mr-1" />
-                        Eingeloggt als {userInfo.name}
-                      </Badge>
+                    <h4 className="font-semibold text-gray-900">Landing Page Generator</h4>
+                    <p className="text-sm text-gray-600">Erstelle eine professionelle Landing Page für dein Startup</p>
+                  </div>
+                </div>
+                
+                {!generatedLandingPage ? (
+                  <div className="space-y-4">
+                    <div className="space-y-2 text-sm text-gray-600">
+                      <p>• KI-generierte Inhalte (Titel, Subline, CTA)</p>
+                      <p>• Integriertes Lead-Capture Formular</p>
+                      <p>• Responsive Design für alle Geräte</p>
+                      <p>• Optimiert für Conversions</p>
+                    </div>
+                    
+                    <Button 
+                      onClick={handleGenerateLandingPage}
+                      disabled={landingPageLoading}
+                      className="w-full"
+                    >
+                      {landingPageLoading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Generiere Landing Page...
+                        </>
+                      ) : (
+                        <>
+                          <Globe className="mr-2 h-4 w-4" />
+                          Landing Page erstellen
+                        </>
+                      )}
+                    </Button>
+                    
+                    {landingPageError && (
+                      <Alert>
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>{landingPageError}</AlertDescription>
+                      </Alert>
                     )}
                   </div>
-                </div>
-                <div className="text-blue-600 font-medium">
-                  {isLoggedIn ? 'Dashboard öffnen →' : 'Mit Google einloggen →'}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-green-50 rounded-lg">
+                      <div className="flex items-center space-x-2 mb-2">
+                        <CheckCircle className="h-5 w-5 text-green-600" />
+                        <h5 className="font-semibold text-green-800">Landing Page erfolgreich erstellt!</h5>
+                      </div>
+                      <p className="text-sm text-green-700 mb-3">
+                        Deine personalisierte Landing Page ist bereit und kann für die Validierung verwendet werden.
+                      </p>
+                      <div className="space-y-2 text-sm">
+                        <p><strong>Titel:</strong> {generatedLandingPage.landingPage.title}</p>
+                        <p><strong>Subline:</strong> {generatedLandingPage.landingPage.subline}</p>
+                        <p><strong>CTA:</strong> {generatedLandingPage.landingPage.cta}</p>
+                      </div>
+                    </div>
+                    
+                    <div className="flex space-x-2">
+                      <Button 
+                        onClick={() => window.open(generatedLandingPage.url, '_blank')}
+                        className="flex-1"
+                      >
+                        <ExternalLink className="mr-2 h-4 w-4" />
+                        Landing Page öffnen
+                      </Button>
+                      <Button 
+                        onClick={() => setGeneratedLandingPage(null)}
+                        variant="outline"
+                      >
+                        Neu generieren
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
 
-          <Card 
-            className="cursor-pointer hover:shadow-lg transition-shadow border-2 hover:border-purple-400"
-            onClick={() => window.open('https://www.facebook.com/adsmanager', '_blank')}
-          >
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center">
-                    <ExternalLink className="w-6 h-6 text-purple-600" />
+          <div>
+            <h3 className="text-xl font-semibold text-gray-900 mb-4">
+              {generatedLandingPage ? 'Schritt 2: Validierungsmethoden' : 'Validierungsmethoden'}
+            </h3>
+            
+            {!generatedLandingPage && (
+              <div className="p-4 bg-yellow-50 rounded-lg mb-4">
+                <p className="text-sm text-yellow-800">
+                  <strong>Hinweis:</strong> Erstelle zuerst eine Landing Page, um optimale Validierungsergebnisse zu erzielen.
+                </p>
+              </div>
+            )}
+            
+            <div className="grid gap-4 md:grid-cols-2">
+            {/* Demo Google Ads */}
+            <Card className="cursor-pointer transition-all hover:shadow-lg border-2 hover:border-blue-500">
+              <CardContent className="p-6">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="p-2 bg-blue-100 rounded-lg">
+                    <Zap className="h-6 w-6 text-blue-600" />
                   </div>
                   <div>
-                    <h3 className="text-xl font-semibold text-gray-800">Meta Ads Validierung</h3>
-                    <p className="text-gray-600">
-                      Teste deine Idee auf Facebook und Instagram
-                    </p>
+                    <h4 className="font-semibold text-gray-900">Google Ads - Demo</h4>
+                    <p className="text-sm text-gray-600">Schnell testen ohne echte Kosten</p>
                   </div>
                 </div>
-                <div className="text-purple-600 font-medium">
-                  Zu Meta Ads →
+                <div className="space-y-2 text-sm text-gray-600 mb-4">
+                  <p>• Simulierte Kampagnen-Erstellung</p>
+                  <p>• Realistische Demo-Daten</p>
+                  <p>• Sofortiger Zugriff</p>
+                  <p>• Keine echten Kosten</p>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+                <Button 
+                  onClick={() => handleGoogleAdsLogin('demo')} 
+                  disabled={isLoading}
+                  className="w-full"
+                  variant="outline"
+                >
+                  {isLoading && mode === 'demo' ? 'Verbinde...' : 'Demo starten'}
+                </Button>
+              </CardContent>
+            </Card>
 
-      {/* Dashboard Access for logged in users */}
-      {isLoggedIn && (
-        <div className="bg-gradient-to-r from-blue-50 to-green-50 p-6 rounded-lg border border-blue-200 mb-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-xl font-semibold text-blue-800 mb-2">📊 Dein Kampagnen-Dashboard</h3>
-              <p className="text-blue-700">
-                Verwalte deine Kampagnen, überwache Performance und optimiere deine Validierung
-              </p>
-              <p className="text-sm text-blue-600 mt-1">
-                Eingeloggt als: {userInfo.name}
-              </p>
+            {/* Real Google Ads */}
+            <Card className="cursor-pointer transition-all hover:shadow-lg border-2 hover:border-green-500">
+              <CardContent className="p-6">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="p-2 bg-green-100 rounded-lg">
+                    <Shield className="h-6 w-6 text-green-600" />
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-gray-900">Google Ads - Live</h4>
+                    <p className="text-sm text-gray-600">Echte Kampagnen mit deinem Account</p>
+                  </div>
+                </div>
+                <div className="space-y-2 text-sm text-gray-600 mb-4">
+                  <p>• Echte Google Ads Kampagnen</p>
+                  <p>• Reale Marktdaten</p>
+                  <p>• Dein Google Ads Account</p>
+                  <p>• Echte Kosten & Resultate</p>
+                </div>
+                <Button 
+                  onClick={() => handleGoogleAdsLogin('real')} 
+                  disabled={isLoading}
+                  className="w-full"
+                >
+                  {isLoading && mode === 'real' ? 'Verbinde...' : 'Mit Google einloggen'}
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Meta Ads - Static Option */}
+            <Card className="cursor-pointer transition-all hover:shadow-lg border-2 hover:border-blue-500">
+              <CardContent className="p-6">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="p-2 bg-blue-100 rounded-lg">
+                    <ExternalLink className="h-6 w-6 text-blue-600" />
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-gray-900">Meta Ads</h4>
+                    <p className="text-sm text-gray-600">Facebook & Instagram Werbung</p>
+                  </div>
+                </div>
+                <div className="space-y-2 text-sm text-gray-600 mb-4">
+                  <p>• Personalisierte Anleitung</p>
+                  <p>• Zielgruppen-Targeting</p>
+                  <p>• Creative-Vorschläge</p>
+                  <p>• Budget-Empfehlungen</p>
+                </div>
+                <Button 
+                  onClick={() => setSelectedMethod('meta-ads')} 
+                  className="w-full"
+                  variant="outline"
+                >
+                  Meta Ads Guide
+                </Button>
+              </CardContent>
+            </Card>
             </div>
-            <Button 
-              onClick={() => setShowDashboard(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
-            >
-              <BarChart3 className="w-4 h-4 mr-2" />
-              Dashboard öffnen
-            </Button>
           </div>
         </div>
       )}
 
-      {/* Improvement Tips */}
-      {improvementTips && improvementTips.length > 0 && (
-        <Card className="bg-yellow-50 border-yellow-200">
+      {/* Meta Ads Guide (existing functionality) */}
+      {selectedMethod === 'meta-ads' && (
+        <Card className="mt-6">
           <CardHeader>
-            <CardTitle className="text-yellow-800">💡 Verbesserungsvorschläge</CardTitle>
+            <CardTitle className="flex items-center space-x-2">
+              <ExternalLink className="h-5 w-5" />
+              <span>Meta Ads Validierung für "{startupIdea}"</span>
+            </CardTitle>
           </CardHeader>
-          <CardContent>
-            <ul className="space-y-2">
-              {improvementTips.map((tip, index) => (
-                <li key={index} className="flex items-start gap-2 text-yellow-700">
-                  <span className="text-yellow-600 mt-1">•</span>
-                  <span>{tip}</span>
-                </li>
-              ))}
-            </ul>
+          <CardContent className="space-y-4">
+            <div className="p-4 bg-blue-50 rounded-lg">
+              <h4 className="font-medium text-blue-900 mb-2">Personalisierter Kampagnen-Setup:</h4>
+              <div className="space-y-2 text-sm text-blue-800">
+                <p><strong>Zielgruppe:</strong> {idealCustomer}</p>
+                <p><strong>Problem:</strong> {problemSolved}</p>
+                <p><strong>Budget:</strong> €20-25/Tag für 30 Tage</p>
+                <p><strong>Kampagnentyp:</strong> Traffic & Conversions</p>
+              </div>
+            </div>
+            
+            <div className="space-y-4">
+              <h4 className="font-medium">Schritt-für-Schritt Anleitung:</h4>
+              <ol className="list-decimal list-inside space-y-2 text-sm">
+                <li>Gehe zu <a href="https://business.facebook.com/adsmanager" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Facebook Ads Manager</a></li>
+                <li>Erstelle eine neue Kampagne mit dem Ziel "Traffic"</li>
+                <li>Definiere deine Zielgruppe basierend auf "{idealCustomer}"</li>
+                <li>Setze dein Budget auf €25/Tag</li>
+                <li>Erstelle Anzeigen mit dem Fokus auf "{problemSolved}"</li>
+                <li>Verwende Headlines wie: "Endlich eine Lösung für {problemSolved}"</li>
+                <li>Leite Traffic zu deiner Landing Page</li>
+                <li>Verfolge Conversions und Engagement</li>
+              </ol>
+            </div>
+            
+            <div className="flex space-x-2">
+              <Button 
+                onClick={() => window.open('https://business.facebook.com/adsmanager', '_blank')}
+                className="flex-1"
+              >
+                Zu Meta Ads Manager
+              </Button>
+              <Button 
+                onClick={() => setSelectedMethod(null)} 
+                variant="outline"
+              >
+                Zurück
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
+
+      {/* Improvement tips for lower scores */}
+      {!isHighScore && showValidationButtons && improvementTips.length > 0 && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle>Verbesserungsvorschläge</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {improvementTips.map((tip, index) => (
+                <div key={index} className="flex items-start space-x-3 p-3 bg-yellow-50 rounded-lg">
+                  <div className="flex-shrink-0 w-6 h-6 bg-yellow-500 text-white rounded-full flex items-center justify-center text-sm font-medium">
+                    {index + 1}
+                  </div>
+                  <p className="text-yellow-800 text-sm">{tip}</p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="flex justify-center">
+        <Button onClick={onBack} variant="outline">
+          ← Zurück zur Analyse
+        </Button>
+      </div>
     </div>
   )
 }

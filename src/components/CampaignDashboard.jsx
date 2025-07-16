@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card.jsx'
 import { Button } from '@/components/ui/button.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
@@ -6,6 +6,8 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert.jsx'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
 import { Progress } from '@/components/ui/progress.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
+import { Switch } from '@/components/ui/switch.jsx'
+import { Label } from '@/components/ui/label.jsx'
 import { 
   BarChart, 
   Bar, 
@@ -18,7 +20,8 @@ import {
   Line,
   PieChart,
   Pie,
-  Cell
+  Cell,
+  ComposedChart
 } from 'recharts'
 import { 
   Play, 
@@ -33,9 +36,15 @@ import {
   RefreshCw,
   AlertTriangle,
   CheckCircle,
-  Activity
+  Activity,
+  Download,
+  Clock,
+  BarChart3,
+  Wifi,
+  WifiOff
 } from 'lucide-react'
 import googleAdsService from '../services/googleAdsService'
+import { io } from 'socket.io-client'
 
 const CampaignDashboard = ({ accountId, onBack }) => {
   const [campaigns, setCampaigns] = useState([])
@@ -45,16 +54,97 @@ const CampaignDashboard = ({ accountId, onBack }) => {
   const [refreshing, setRefreshing] = useState(false)
   const [dateRange, setDateRange] = useState('LAST_7_DAYS')
   const [error, setError] = useState(null)
+  const [isAutoRefreshEnabled, setIsAutoRefreshEnabled] = useState(true)
+  const [refreshInterval, setRefreshInterval] = useState(30000)
+  const [lastRefresh, setLastRefresh] = useState(null)
+  const [isConnected, setIsConnected] = useState(false)
+  const [historicalData, setHistoricalData] = useState([])
+  const [comparisonDateRange, setComparisonDateRange] = useState('LAST_14_DAYS')
+  const socketRef = useRef(null)
+  const refreshIntervalRef = useRef(null)
 
   useEffect(() => {
     loadCampaigns()
+    initializeWebSocket()
+    
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect()
+      }
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current)
+      }
+    }
   }, [accountId])
 
   useEffect(() => {
     if (selectedCampaign) {
       loadCampaignInsights(selectedCampaign.id)
+      loadHistoricalData(selectedCampaign.id)
     }
   }, [selectedCampaign, dateRange])
+
+  useEffect(() => {
+    if (refreshIntervalRef.current) {
+      clearInterval(refreshIntervalRef.current)
+    }
+
+    if (isAutoRefreshEnabled && selectedCampaign) {
+      refreshIntervalRef.current = setInterval(() => {
+        loadCampaignInsights(selectedCampaign.id)
+        loadCampaigns()
+      }, refreshInterval)
+    }
+
+    return () => {
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current)
+      }
+    }
+  }, [isAutoRefreshEnabled, selectedCampaign, refreshInterval])
+
+  const initializeWebSocket = () => {
+    try {
+      socketRef.current = io('http://localhost:3001')
+      
+      socketRef.current.on('connect', () => {
+        setIsConnected(true)
+        console.log('WebSocket connected')
+        // Join the account room for updates
+        socketRef.current.emit('join-account', accountId)
+      })
+      
+      socketRef.current.on('disconnect', () => {
+        setIsConnected(false)
+        console.log('WebSocket disconnected')
+      })
+      
+      socketRef.current.on('campaign-update', (data) => {
+        if (data.accountId === accountId) {
+          setCampaigns(prev => 
+            prev.map(campaign => 
+              campaign.id === data.campaignData.id 
+                ? { ...campaign, ...data.campaignData }
+                : campaign
+            )
+          )
+          
+          if (selectedCampaign && selectedCampaign.id === data.campaignData.id) {
+            setSelectedCampaign(prev => ({ ...prev, ...data.campaignData }))
+          }
+        }
+      })
+      
+      socketRef.current.on('account-update', (data) => {
+        if (data.accountId === accountId) {
+          setCampaigns(data.data.campaigns)
+          setLastRefresh(new Date(data.timestamp))
+        }
+      })
+    } catch (error) {
+      console.error('WebSocket initialization error:', error)
+    }
+  }
 
   const loadCampaigns = async () => {
     try {
@@ -62,8 +152,8 @@ const CampaignDashboard = ({ accountId, onBack }) => {
       setError(null)
       const campaignsList = await googleAdsService.getCampaigns(accountId)
       setCampaigns(campaignsList)
+      setLastRefresh(new Date())
       
-      // Auto-select first campaign if available
       if (campaignsList.length > 0 && !selectedCampaign) {
         setSelectedCampaign(campaignsList[0])
       }
@@ -80,11 +170,21 @@ const CampaignDashboard = ({ accountId, onBack }) => {
       setRefreshing(true)
       const insights = await googleAdsService.getCampaignInsights(accountId, campaignId, dateRange)
       setCampaignInsights(insights)
+      setLastRefresh(new Date())
     } catch (error) {
       console.error('Error loading campaign insights:', error)
       setError('Fehler beim Laden der Kampagnen-Insights: ' + error.message)
     } finally {
       setRefreshing(false)
+    }
+  }
+
+  const loadHistoricalData = async (campaignId) => {
+    try {
+      const historical = await googleAdsService.getCampaignInsights(accountId, campaignId, comparisonDateRange)
+      setHistoricalData(historical.dailyData || [])
+    } catch (error) {
+      console.error('Error loading historical data:', error)
     }
   }
 
@@ -145,6 +245,45 @@ const CampaignDashboard = ({ accountId, onBack }) => {
     }
   }
 
+  const handleExport = (format) => {
+    try {
+      const exportData = selectedCampaign ? [selectedCampaign] : campaigns
+      const content = googleAdsService.exportCampaignData(exportData, format)
+      const filename = `campaign-data-${new Date().toISOString().split('T')[0]}.${format}`
+      const contentType = format === 'csv' ? 'text/csv' : 'application/json'
+      
+      googleAdsService.downloadFile(content, filename, contentType)
+    } catch (error) {
+      console.error('Export error:', error)
+      setError('Fehler beim Exportieren: ' + error.message)
+    }
+  }
+
+  const formatLastRefresh = () => {
+    if (!lastRefresh) return 'Nie'
+    return lastRefresh.toLocaleTimeString('de-DE')
+  }
+
+  const getComparisonData = () => {
+    if (!campaignInsights?.dailyData || !historicalData.length) return null
+    
+    const currentPeriod = campaignInsights.dailyData
+    const previousPeriod = historicalData.slice(-currentPeriod.length)
+    
+    return currentPeriod.map((current, index) => {
+      const previous = previousPeriod[index] || { impressions: 0, clicks: 0, cost: 0 }
+      return {
+        date: current.date,
+        currentImpressions: current.impressions,
+        previousImpressions: previous.impressions,
+        currentClicks: current.clicks,
+        previousClicks: previous.clicks,
+        currentCost: current.cost,
+        previousCost: previous.cost
+      }
+    })
+  }
+
   const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8']
 
   if (loading) {
@@ -179,7 +318,34 @@ const CampaignDashboard = ({ accountId, onBack }) => {
           <h2 className="text-2xl font-bold">Kampagnen-Dashboard</h2>
           <p className="text-gray-600">Überwachen Sie Ihre Validierungs-Kampagnen</p>
         </div>
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2">
+            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className="text-sm text-gray-600">
+              {isConnected ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
+            </span>
+          </div>
+          
+          <div className="flex items-center space-x-2">
+            <Switch 
+              checked={isAutoRefreshEnabled}
+              onCheckedChange={setIsAutoRefreshEnabled}
+            />
+            <Label className="text-sm">Auto-Refresh</Label>
+          </div>
+          
+          <Select value={refreshInterval.toString()} onValueChange={(value) => setRefreshInterval(Number(value))}>
+            <SelectTrigger className="w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="15000">15s</SelectItem>
+              <SelectItem value="30000">30s</SelectItem>
+              <SelectItem value="60000">1m</SelectItem>
+              <SelectItem value="300000">5m</SelectItem>
+            </SelectContent>
+          </Select>
+          
           <Select value={dateRange} onValueChange={setDateRange}>
             <SelectTrigger className="w-48">
               <SelectValue />
@@ -192,6 +358,7 @@ const CampaignDashboard = ({ accountId, onBack }) => {
               <SelectItem value="THIS_MONTH">Dieser Monat</SelectItem>
             </SelectContent>
           </Select>
+          
           <Button 
             variant="outline" 
             onClick={() => loadCampaigns()}
@@ -199,6 +366,25 @@ const CampaignDashboard = ({ accountId, onBack }) => {
           >
             <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
           </Button>
+          
+          <div className="flex items-center space-x-2">
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => handleExport('csv')}
+            >
+              <Download className="w-4 h-4 mr-1" />
+              CSV
+            </Button>
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => handleExport('json')}
+            >
+              <Download className="w-4 h-4 mr-1" />
+              JSON
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -286,9 +472,10 @@ const CampaignDashboard = ({ accountId, onBack }) => {
           <div className="lg:col-span-2">
             {selectedCampaign && (
               <Tabs defaultValue="overview" className="space-y-4">
-                <TabsList className="grid w-full grid-cols-3">
+                <TabsList className="grid w-full grid-cols-4">
                   <TabsTrigger value="overview">Übersicht</TabsTrigger>
                   <TabsTrigger value="performance">Performance</TabsTrigger>
+                  <TabsTrigger value="comparison">Vergleich</TabsTrigger>
                   <TabsTrigger value="insights">Insights</TabsTrigger>
                 </TabsList>
 
@@ -379,6 +566,13 @@ const CampaignDashboard = ({ accountId, onBack }) => {
                             {getPerformanceIndicator(selectedCampaign.conversionRate, 2)}
                           </span>
                         </div>
+                        <div className="flex items-center justify-between pt-2 border-t">
+                          <span className="text-sm text-gray-500">Letzte Aktualisierung:</span>
+                          <span className="text-sm font-medium flex items-center">
+                            <Clock className="w-3 h-3 mr-1" />
+                            {formatLastRefresh()}
+                          </span>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
@@ -394,15 +588,16 @@ const CampaignDashboard = ({ accountId, onBack }) => {
                         </CardHeader>
                         <CardContent>
                           <ResponsiveContainer width="100%" height={300}>
-                            <LineChart data={campaignInsights.dailyData}>
+                            <ComposedChart data={campaignInsights.dailyData}>
                               <CartesianGrid strokeDasharray="3 3" />
                               <XAxis dataKey="date" />
                               <YAxis yAxisId="left" />
                               <YAxis yAxisId="right" orientation="right" />
                               <Tooltip />
                               <Bar yAxisId="left" dataKey="impressions" fill="#8884d8" name="Impressionen" />
-                              <Line yAxisId="right" type="monotone" dataKey="clicks" stroke="#82ca9d" name="Klicks" />
-                            </LineChart>
+                              <Line yAxisId="right" type="monotone" dataKey="clicks" stroke="#82ca9d" name="Klicks" strokeWidth={2} />
+                              <Line yAxisId="right" type="monotone" dataKey="conversions" stroke="#ff7300" name="Conversions" strokeWidth={2} />
+                            </ComposedChart>
                           </ResponsiveContainer>
                         </CardContent>
                       </Card>
@@ -425,6 +620,73 @@ const CampaignDashboard = ({ accountId, onBack }) => {
                         </CardContent>
                       </Card>
                     </>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="comparison" className="space-y-4">
+                  {getComparisonData() && (
+                    <>
+                      <Card>
+                        <CardHeader>
+                          <CardTitle>Zeitraum-Vergleich</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="flex items-center space-x-4 mb-4">
+                            <Label>Vergleichszeitraum:</Label>
+                            <Select value={comparisonDateRange} onValueChange={setComparisonDateRange}>
+                              <SelectTrigger className="w-48">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="LAST_14_DAYS">Letzte 14 Tage</SelectItem>
+                                <SelectItem value="LAST_30_DAYS">Letzte 30 Tage</SelectItem>
+                                <SelectItem value="LAST_90_DAYS">Letzte 90 Tage</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <ResponsiveContainer width="100%" height={300}>
+                            <LineChart data={getComparisonData()}>
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="date" />
+                              <YAxis />
+                              <Tooltip />
+                              <Line type="monotone" dataKey="currentImpressions" stroke="#8884d8" name="Aktuelle Impressionen" strokeWidth={2} />
+                              <Line type="monotone" dataKey="previousImpressions" stroke="#8884d8" strokeDasharray="5 5" name="Vorherige Impressionen" strokeWidth={2} />
+                              <Line type="monotone" dataKey="currentClicks" stroke="#82ca9d" name="Aktuelle Klicks" strokeWidth={2} />
+                              <Line type="monotone" dataKey="previousClicks" stroke="#82ca9d" strokeDasharray="5 5" name="Vorherige Klicks" strokeWidth={2} />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </CardContent>
+                      </Card>
+                      
+                      <Card>
+                        <CardHeader>
+                          <CardTitle>Kosten-Vergleich</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <ResponsiveContainer width="100%" height={300}>
+                            <BarChart data={getComparisonData()}>
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="date" />
+                              <YAxis />
+                              <Tooltip />
+                              <Bar dataKey="currentCost" fill="#ffc658" name="Aktuelle Kosten" />
+                              <Bar dataKey="previousCost" fill="#ffb347" name="Vorherige Kosten" />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </CardContent>
+                      </Card>
+                    </>
+                  )}
+                  
+                  {!getComparisonData() && (
+                    <Alert>
+                      <BarChart3 className="h-4 w-4" />
+                      <AlertTitle>Keine Vergleichsdaten verfügbar</AlertTitle>
+                      <AlertDescription>
+                        Wählen Sie eine Kampagne aus, um Vergleichsdaten zu sehen.
+                      </AlertDescription>
+                    </Alert>
                   )}
                 </TabsContent>
 
